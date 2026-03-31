@@ -1,0 +1,90 @@
+[project]
+name = "ida-script-mcp"
+version = "1.0.0"
+description = "MCP server for executing IDAPython scripts in IDA Pro with multi-instance support"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    { name = "IDA Script MCP Contributors" },
+]
+maintainers = [
+    { name = "IDA Script MCP Contributors" },
+]
+keywords = [
+    "ida",
+    "ida-pro",
+    "mcp",
+    "model-context-protocol",
+    "idapython",
+    "reverse-engineering",
+    "binary-analysis",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Software Development :: Disassemblers",
+    "Typing :: Typed",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.1.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/ida-script-mcp"
+Documentation = "https://github.com/yourusername/ida-script-mcp#readme"
+Repository = "https://github.com/yourusername/ida-script-mcp.git"
+Issues = "https://github.com/yourusername/ida-script-mcp/issues"
+Changelog = "https://github.com/yourusername/ida-script-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+ida-script-mcp = "ida_script_mcp.server:main"
+ida-script-mcp-install = "ida_script_mcp.installer:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ida_script_mcp = ["py.typed"]
+
+[tool.pyright]
+include = ["src/ida_script_mcp"]
+typeCheckingMode = "basic"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
