@@ -1,6 +1,6 @@
 [project]
 name = "ida-script-mcp"
-version = "1.0.0"
+version = "1.0.1"
 description = "MCP server for executing IDAPython scripts in IDA Pro with multi-instance support"
 readme = "README.md"
 license = {text = "MIT"}
