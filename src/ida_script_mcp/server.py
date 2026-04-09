@@ -9,12 +9,15 @@ Supports multiple IDA instances running simultaneously.
 import os
 import argparse
 import json
+import logging
 import http.client
 from typing import Optional, List
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
+
+logging.getLogger("mcp").setLevel(logging.WARNING)
 
 
 mcp = FastMCP("ida_script_mcp")
