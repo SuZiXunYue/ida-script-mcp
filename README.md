@@ -52,7 +52,7 @@ ida-script-mcp-install --list-clients
 #### From Source
 
 ```bash
-git clone [https://github.com/yourusername/ida-script-mcp.git](https://github.com/SuZiXunYue/ida-script-mcp.git)
+git clone https://github.com/yourusername/ida-script-mcp.git
 cd ida-script-mcp
 pip install -e .
 ida-script-mcp-install install
@@ -176,7 +176,7 @@ ida-script-mcp-install --list-clients
 #### 从源码安装
 
 ```bash
-git clone [https://github.com/yourusername/ida-script-mcp.git](https://github.com/SuZiXunYue/ida-script-mcp.git)
+git clone https://github.com/yourusername/ida-script-mcp.git
 cd ida-script-mcp
 pip install -e .
 ida-script-mcp-install install
