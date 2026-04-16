@@ -1,6 +1,6 @@
 [project]
 name = "ida-script-mcp"
-version = "1.0.1"
+version = "1.1.0"
 description = "MCP server for executing IDAPython scripts in IDA Pro with multi-instance support"
 readme = "README.md"
 license = {text = "MIT"}
@@ -53,11 +53,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/ida-script-mcp"
-Documentation = "https://github.com/yourusername/ida-script-mcp#readme"
-Repository = "https://github.com/yourusername/ida-script-mcp.git"
-Issues = "https://github.com/yourusername/ida-script-mcp/issues"
-Changelog = "https://github.com/yourusername/ida-script-mcp/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/SuZiXunYue/ida-script-mcp"
+Documentation = "https://github.com/SuZiXunYue/ida-script-mcp#readme"
+Repository = "https://github.com/SuZiXunYue/ida-script-mcp.git"
+Issues = "https://github.com/SuZiXunYue/ida-script-mcp/issues"
+Changelog = "https://github.com/SuZiXunYue/ida-script-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 ida-script-mcp = "ida_script_mcp.server:main"

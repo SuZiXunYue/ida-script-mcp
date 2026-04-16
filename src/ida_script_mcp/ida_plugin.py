@@ -10,6 +10,7 @@ import json
 import io
 import sys
 import ast
+import socket
 import traceback
 import queue
 import os
@@ -431,9 +432,9 @@ class IdaScriptHttpHandler(BaseHTTPRequestHandler):
 
 class IdaScriptHttpServer(HTTPServer):
     """HTTP server for IDA Script MCP."""
-    
-    allow_reuse_address = True
-    
+
+    allow_reuse_address = sys.platform != "win32"
+
     def __init__(self, host: str, port: int):
         super().__init__((host, port), IdaScriptHttpHandler)
         self.host = host
@@ -465,24 +466,38 @@ if HAS_IDA:
             
             self._start_server()
         
+        def _is_port_in_use(self, port: int) -> bool:
+            """Check if a port is already in use by trying to connect to it."""
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                try:
+                    s.connect((self.host, port))
+                    return True
+                except (ConnectionRefusedError, socket.timeout, OSError):
+                    return False
+
         def _start_server(self):
             """Start the HTTP server."""
             port = self.port
             max_port = port + MAX_PORT_RANGE
-            
+
             while port < max_port:
+                if self._is_port_in_use(port):
+                    print(f"[{PLUGIN_NAME}] Port {port} is already in use, trying next...")
+                    port += 1
+                    continue
                 try:
                     self.server = IdaScriptHttpServer(self.host, port)
                     self.port = port
-                    
+
                     instance_registry.register(port)
-                    
+
                     self.server_thread = threading.Thread(
                         target=self.server.serve_forever,
                         daemon=True
                     )
                     self.server_thread.start()
-                    
+
                     print(f"[{PLUGIN_NAME}] Server started at http://{self.host}:{port}")
                     print(f"[{PLUGIN_NAME}] Instance ID: {instance_registry.instance_id}")
                     print(f"[{PLUGIN_NAME}] Database: {instance_registry.database}")
@@ -493,7 +508,7 @@ if HAS_IDA:
                         port += 1
                     else:
                         raise
-            
+
             print(f"[{PLUGIN_NAME}] Error: No available port in range {self.port}-{max_port - 1}")
         
         def _stop_server(self):
