@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-08
+
+### Added
+- **Async task execution system**: Long-running scripts no longer cause client disconnection. Scripts are submitted asynchronously to IDA, and the MCP server polls for completion with exponential backoff (0.5s → 5s cap). If the configurable timeout (default: 600s) is exceeded, a `task_id` is returned for later status queries.
+- **`check_task_status` tool**: New MCP tool to query the status and result of a long-running script execution task by its `task_id`.
+- **`timeout` parameter for `execute_idapython`**: Configurable maximum wait time (default: 600 seconds) before returning a `task_id` for deferred polling.
+- **Task management endpoints in IDA plugin**: `GET /task/{id}` to query task status/result, `GET /tasks` to list all tasks.
+- **`async` mode for `POST /execute`**: IDA plugin now accepts `{"async": true}` to submit scripts for background execution and immediately return a `task_id`.
+- **ThreadingMixIn HTTP server**: The IDA plugin HTTP server now handles each request in a separate thread, preventing a single long-running script from blocking other requests (e.g., health checks, task status queries).
+
+### Fixed
+- **Client disconnection on long-running scripts**: Previously, scripts running longer than 60 seconds would cause the MCP server's HTTP connection to IDA to time out, while the script continued running in IDA with no way to retrieve the result. The new async task system eliminates this issue.
+- **HTTP server blocking**: The IDA plugin's single-threaded HTTP server could be blocked by a running script, making all other endpoints (health, metadata) unreachable. Switched to `ThreadingMixIn` for concurrent request handling.
+
 ## [1.1.0] - 2026-04-16
 
 ### Fixed

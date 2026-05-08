@@ -65,6 +65,16 @@ class TestExecuteScriptInput:
         """Test port parameter."""
         params = ExecuteScriptInput(code="print('hello')", port=13339)
         assert params.port == 13339
+    
+    def test_timeout_default(self):
+        """Test default timeout value."""
+        params = ExecuteScriptInput(code="print('hello')")
+        assert params.timeout == 600
+    
+    def test_timeout_custom(self):
+        """Test custom timeout value."""
+        params = ExecuteScriptInput(code="print('hello')", timeout=120)
+        assert params.timeout == 120
 
 
 class TestConfiguration:

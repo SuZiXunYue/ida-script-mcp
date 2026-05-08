@@ -1,7 +1,7 @@
 [project]
 name = "ida-script-mcp"
-version = "1.1.0"
-description = "MCP server for executing IDAPython scripts in IDA Pro with multi-instance support"
+version = "1.2.0"
+description = "MCP server for executing IDAPython scripts in IDA Pro with multi-instance and async task support"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -42,6 +42,7 @@ classifiers = [
 dependencies = [
     "mcp>=1.25.0",
     "pydantic>=2.0.0",
+    "anyio>=4.0.0",
 ]
 
 [project.optional-dependencies]

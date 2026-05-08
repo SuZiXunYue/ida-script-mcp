@@ -10,7 +10,9 @@ import os
 import argparse
 import json
 import logging
+import time
 import http.client
+import anyio
 from typing import Optional, List
 from pathlib import Path
 
@@ -68,6 +70,11 @@ class ExecuteScriptInput(BaseModel):
     port: Optional[int] = Field(
         default=None,
         description="Target IDA instance port (optional, uses default if not specified).",
+    )
+    timeout: int = Field(
+        default=600,
+        description="Maximum time in seconds to wait for script execution to complete (default: 600). "
+        "If the script takes longer, a task_id will be returned to check status later.",
     )
 
 
@@ -247,6 +254,10 @@ async def execute_idapython(params: ExecuteScriptInput) -> str:
     This tool sends Python code to the IDA Pro plugin for execution.
     The code runs in IDA's main thread with full access to all IDA API modules.
     
+    For long-running scripts, the tool polls for completion up to the timeout.
+    If the timeout is exceeded, a task_id is returned so you can check status later
+    using the check_task_status tool.
+    
     Args:
         params (ExecuteScriptInput): Validated input parameters containing:
             - code (Optional[str]): Python code string to execute
@@ -254,6 +265,7 @@ async def execute_idapython(params: ExecuteScriptInput) -> str:
             - capture_output (bool): Whether to capture stdout/stderr
             - instance_id (Optional[str]): Target IDA instance ID (e.g., "crackme.exe" or full ID)
             - port (Optional[int]): Target IDA instance port (e.g., 13338)
+            - timeout (int): Maximum wait time in seconds (default: 600)
             
     Returns:
         str: JSON-formatted string containing:
@@ -261,6 +273,7 @@ async def execute_idapython(params: ExecuteScriptInput) -> str:
             - stdout: Captured standard output
             - stderr: Captured standard output (including errors)
             - instance: The IDA instance that executed the code
+            - task_id: Present if script is still running or timed out
             
     Examples:
         # Execute on default instance
@@ -293,19 +306,81 @@ async def execute_idapython(params: ExecuteScriptInput) -> str:
         }, indent=2)
     
     try:
-        result = make_ida_request(
-            "/execute",
-            method="POST",
-            data={
-                "code": params.code,
-                "script_path": params.script_path,
-                "capture_output": params.capture_output,
-            },
-            port=port,
+        submit_result = await anyio.to_thread.run_sync(
+            lambda: make_ida_request(
+                "/execute",
+                method="POST",
+                data={
+                    "code": params.code,
+                    "script_path": params.script_path,
+                    "capture_output": params.capture_output,
+                    "async": True,
+                },
+                port=port,
+                timeout=10.0,
+            )
         )
-        result["instance"] = instance_info
-        result["port"] = port
-        return json.dumps(result, indent=2, ensure_ascii=False)
+
+        task_id = submit_result.get("task_id")
+
+        if not task_id:
+            submit_result["instance"] = instance_info
+            submit_result["port"] = port
+            return json.dumps(submit_result, indent=2, ensure_ascii=False)
+
+        poll_interval = 0.5
+        start_time = time.monotonic()
+        max_wait = params.timeout
+        consecutive_errors = 0
+
+        while True:
+            elapsed = time.monotonic() - start_time
+            if elapsed >= max_wait:
+                return json.dumps({
+                    "task_id": task_id,
+                    "status": "running",
+                    "message": (
+                        f"Script execution timed out after {max_wait}s. "
+                        f"Use check_task_status with task_id '{task_id}' to check result later."
+                    ),
+                    "instance": instance_info,
+                    "port": port,
+                }, indent=2, ensure_ascii=False)
+
+            try:
+                task_status = await anyio.to_thread.run_sync(
+                    lambda: make_ida_request(
+                        f"/task/{task_id}",
+                        port=port,
+                        timeout=5.0,
+                    )
+                )
+                consecutive_errors = 0
+            except Exception as e:
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    return json.dumps({
+                        "result": "",
+                        "stdout": "",
+                        "stderr": (
+                            f"Error: Lost connection to IDA plugin after {consecutive_errors} "
+                            f"failed polls: {e}"
+                        ),
+                        "task_id": task_id,
+                    }, indent=2, ensure_ascii=False)
+                await anyio.sleep(poll_interval)
+                poll_interval = min(poll_interval * 1.5, 5.0)
+                continue
+
+            status = task_status.get("status")
+            if status in ("completed", "failed"):
+                task_status["instance"] = instance_info
+                task_status["port"] = port
+                return json.dumps(task_status, indent=2, ensure_ascii=False)
+
+            await anyio.sleep(poll_interval)
+            poll_interval = min(poll_interval * 1.5, 5.0)
+
     except Exception as e:
         return json.dumps({
             "result": "",
@@ -398,6 +473,58 @@ async def get_ida_database_info(instance_id: Optional[str] = None) -> str:
         return json.dumps({
             "error": str(e),
             "hint": "Make sure IDA Pro is running with the IDA-Script-MCP plugin started.",
+        }, indent=2)
+
+
+@mcp.tool(
+    name="check_task_status",
+    annotations={
+        "title": "Check Task Status",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def check_task_status(
+    task_id: str,
+    instance_id: Optional[str] = None,
+    port: Optional[int] = None,
+) -> str:
+    """Check the status of a long-running script execution task.
+    
+    Use this tool when execute_idapython returns a task_id with status 'running' or 'pending',
+    indicating the script is still executing in IDA Pro and the timeout was exceeded.
+    
+    Args:
+        task_id: The task ID returned by execute_idapython
+        instance_id: Target IDA instance ID (optional, uses default if not specified)
+        port: Target IDA instance port (optional, uses default if not specified)
+        
+    Returns:
+        str: JSON-formatted task status with result if completed.
+    """
+    if port:
+        resolved_port = port
+        instance_info = f"port:{port}"
+    else:
+        resolved_port, instance_info = find_instance_port(instance_id)
+    
+    if resolved_port is None:
+        return json.dumps({"error": instance_info}, indent=2)
+    
+    try:
+        task_status = await anyio.to_thread.run_sync(
+            lambda: make_ida_request(f"/task/{task_id}", port=resolved_port, timeout=5.0)
+        )
+        task_status["instance"] = instance_info
+        task_status["port"] = resolved_port
+        return json.dumps(task_status, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({
+            "error": str(e),
+            "task_id": task_id,
+            "hint": "Could not reach IDA plugin. It may have been closed.",
         }, indent=2)
 
 

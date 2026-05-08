@@ -15,8 +15,10 @@ import traceback
 import queue
 import os
 import time
+import uuid
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from typing import Any, Optional
 from urllib.parse import urlparse
 from pathlib import Path
@@ -152,6 +154,81 @@ class InstanceRegistry:
 
 
 instance_registry = InstanceRegistry()
+
+
+class TaskStatus:
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class Task:
+    def __init__(self, task_id, code=None, script_path=None, capture_output=True):
+        self.task_id = task_id
+        self.code = code
+        self.script_path = script_path
+        self.capture_output = capture_output
+        self.status = TaskStatus.PENDING
+        self.result = None
+        self.created_at = time.time()
+        self.started_at = None
+        self.completed_at = None
+
+    def to_dict(self, include_result=False):
+        d = {
+            "task_id": self.task_id,
+            "status": self.status,
+            "created_at": self.created_at,
+        }
+        if self.started_at is not None:
+            d["started_at"] = self.started_at
+        if self.completed_at is not None:
+            d["completed_at"] = self.completed_at
+            d["duration"] = round(
+                self.completed_at - (self.started_at or self.created_at), 3
+            )
+        if include_result and self.result is not None:
+            d.update(self.result)
+        return d
+
+
+class TaskManager:
+    MAX_TASKS = 100
+
+    def __init__(self):
+        self.tasks: dict[str, Task] = {}
+        self.lock = threading.Lock()
+
+    def create_task(self, code=None, script_path=None, capture_output=True):
+        task_id = uuid.uuid4().hex[:8]
+        task = Task(task_id, code, script_path, capture_output)
+        with self.lock:
+            if len(self.tasks) >= self.MAX_TASKS:
+                self._cleanup()
+            self.tasks[task_id] = task
+        return task
+
+    def get_task(self, task_id: str):
+        with self.lock:
+            return self.tasks.get(task_id)
+
+    def list_tasks(self):
+        with self.lock:
+            return [t.to_dict() for t in self.tasks.values()]
+
+    def _cleanup(self):
+        completed = [
+            (tid, t)
+            for tid, t in self.tasks.items()
+            if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
+        ]
+        completed.sort(key=lambda x: x[1].completed_at or 0)
+        for tid, _ in completed[: len(completed) // 2 + 1]:
+            del self.tasks[tid]
+
+
+task_manager = TaskManager()
 
 
 def execute_on_main_thread(func, *args, **kwargs):
@@ -369,7 +446,7 @@ class IdaScriptHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Handle GET requests."""
         parsed = urlparse(self.path)
-        
+
         if parsed.path == "/health":
             self._send_json_response(200, {
                 "status": "ok",
@@ -384,17 +461,26 @@ class IdaScriptHttpHandler(BaseHTTPRequestHandler):
                 "port": instance_registry.port,
                 **db_info,
             })
+        elif parsed.path == "/tasks":
+            self._send_json_response(200, {"tasks": task_manager.list_tasks()})
+        elif parsed.path.startswith("/task/"):
+            task_id = parsed.path[len("/task/"):]
+            task = task_manager.get_task(task_id)
+            if task:
+                self._send_json_response(200, task.to_dict(include_result=True))
+            else:
+                self._send_json_response(404, {"error": f"Task '{task_id}' not found"})
         else:
             self._send_json_response(404, {"error": "Not found"})
     
     def do_POST(self):
         """Handle POST requests."""
         parsed = urlparse(self.path)
-        
+
         if parsed.path != "/execute":
             self._send_json_response(404, {"error": "Not found"})
             return
-        
+
         try:
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8")
@@ -402,38 +488,79 @@ class IdaScriptHttpHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError as e:
             self._send_json_response(400, {"error": f"Invalid JSON: {e}"})
             return
-        
+
         code = request_data.get("code")
         script_path = request_data.get("script_path")
         capture_output = request_data.get("capture_output", True)
-        
-        try:
-            if HAS_IDA:
-                result = execute_on_main_thread(
-                    execute_python_script,
-                    code=code,
-                    script_path=script_path,
-                    capture_output=capture_output,
-                )
-            else:
-                result = execute_python_script(
-                    code=code,
-                    script_path=script_path,
-                    capture_output=capture_output,
-                )
-            self._send_json_response(200, result)
-        except Exception as e:
-            self._send_json_response(500, {
-                "result": "",
-                "stdout": "",
-                "stderr": f"Execution error: {e}",
-            })
+        async_mode = request_data.get("async", False)
+
+        if async_mode:
+            task = task_manager.create_task(code, script_path, capture_output)
+
+            def run_task():
+                task.status = TaskStatus.RUNNING
+                task.started_at = time.time()
+                try:
+                    if HAS_IDA:
+                        result = execute_on_main_thread(
+                            execute_python_script,
+                            code=task.code,
+                            script_path=task.script_path,
+                            capture_output=task.capture_output,
+                        )
+                    else:
+                        result = execute_python_script(
+                            code=task.code,
+                            script_path=task.script_path,
+                            capture_output=task.capture_output,
+                        )
+                    task.status = TaskStatus.COMPLETED
+                    task.result = result
+                except Exception as e:
+                    task.status = TaskStatus.FAILED
+                    task.result = {
+                        "result": "",
+                        "stdout": "",
+                        "stderr": f"Execution error: {e}",
+                    }
+                finally:
+                    task.completed_at = time.time()
+
+            thread = threading.Thread(target=run_task, daemon=True)
+            thread.start()
+            self._send_json_response(200, task.to_dict())
+        else:
+            try:
+                if HAS_IDA:
+                    result = execute_on_main_thread(
+                        execute_python_script,
+                        code=code,
+                        script_path=script_path,
+                        capture_output=capture_output,
+                    )
+                else:
+                    result = execute_python_script(
+                        code=code,
+                        script_path=script_path,
+                        capture_output=capture_output,
+                    )
+                self._send_json_response(200, result)
+            except Exception as e:
+                self._send_json_response(500, {
+                    "result": "",
+                    "stdout": "",
+                    "stderr": f"Execution error: {e}",
+                })
 
 
-class IdaScriptHttpServer(HTTPServer):
-    """HTTP server for IDA Script MCP."""
-
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Thread-per-request HTTP server for IDA Script MCP."""
+    daemon_threads = True
     allow_reuse_address = sys.platform != "win32"
+
+
+class IdaScriptHttpServer(ThreadingHTTPServer):
+    """HTTP server for IDA Script MCP."""
 
     def __init__(self, host: str, port: int):
         super().__init__((host, port), IdaScriptHttpHandler)
